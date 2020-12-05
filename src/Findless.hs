@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE RankNTypes #-}
@@ -24,10 +25,17 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Persist (Persist)
+import Data.Persist.HashMap.Strict ()
+import Data.Persist.Vector ()
 import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import GHC.Generics (Generic)
+import qualified VectorBuilder.Builder as Builder (singleton, size)
+import qualified VectorBuilder.Builder as Vector (Builder)
+import VectorBuilder.Vector (build)
 
 import qualified Syntax
 
@@ -116,8 +124,6 @@ rewrite f = go
   go :: Expr a -> Expr a
   go e = let e' = mapDirectChildren go e in maybe e' go (f e')
 
-type Index = Map Value (Vector (HashMap Text Value))
-
 data Value
   = VNothing
   | VJust Value
@@ -125,32 +131,76 @@ data Value
   | VFalse
   | VList (Vector Value)
   | VRecord (HashMap Text Value)
-  | VIndexed (Vector Value) (Map Text Index)
+  | VIndexed (Vector Value) Table
   | VInt Int
   | VString Text
   deriving (Eq, Ord, Show, Generic)
 instance NFData Value
+instance Persist Value
 
-buildIndexes :: Vector (HashMap Text Value) -> Map Text Index
-buildIndexes content =
-  foldl'
-    ( \acc field ->
-        Map.insert
-          field
-          ( Vector.foldl'
-              ( \rest row -> case HashMap.lookup field row of
-                  Nothing -> error "missing field"
-                  Just value -> Map.insertWith (<>) value [row] rest
-              )
-              mempty
-              content
-          )
-          acc
-    )
-    mempty
-    fields
+renderValue :: Value -> Text
+renderValue value =
+  case value of
+    VInt n -> Text.pack (show n)
+    VString s -> s
+    _ -> undefined
+
+newtype Id = Id Int
+  deriving (Eq, Ord, Show, Generic)
+instance NFData Id
+instance Persist Id
+
+newtype Index = Index (Map Value (Vector Id))
+  deriving (Eq, Ord, Show, Generic)
+instance Persist Index
+instance NFData Index
+
+instance Semigroup Index where
+  Index a <> Index b = Index (Map.unionWith (<>) a b)
+instance Monoid Index where
+  mempty = Index mempty
+
+indexInsert :: Value -> Id -> Index -> Index
+indexInsert k v (Index m) = Index (Map.insertWith (<>) k [v] m)
+
+indexLookup :: Value -> Index -> Maybe (Vector Id)
+indexLookup v (Index m) = Map.lookup v m
+
+data TableBuilder = TableBuilder
+  { _tableBuilderData :: Vector.Builder (HashMap Text Value)
+  , _tableBuilderIndexes :: HashMap Text Index
+  }
+
+insertRow :: HashMap Text Value -> TableBuilder -> TableBuilder
+insertRow row (TableBuilder data_ indexes) =
+  TableBuilder (data_ <> Builder.singleton row) updatedIndexes
  where
-  fields = toList . HashMap.keys $ Vector.head content
+  !rowId = Id $ Builder.size data_
+  !updatedIndexes =
+    HashMap.mapWithKey
+      ( \k index -> case HashMap.lookup k row of
+          Nothing -> undefined
+          Just value -> indexInsert value rowId index
+      )
+      indexes
+
+data Table = Table {_tableData :: Vector (HashMap Text Value), _tableIndexes :: HashMap Text Index}
+  deriving (Eq, Ord, Show, Generic)
+instance Persist Table
+instance NFData Table
+
+selectRows :: Text -> Value -> Table -> Maybe (Vector (HashMap Text Value))
+selectRows field value (Table data_ indexes) = do
+  index <- HashMap.lookup field indexes
+  ids <- indexLookup value index
+  pure $ (\(Id i) -> Vector.unsafeIndex data_ i) <$> ids
+
+buildIndexes :: Vector (HashMap Text Value) -> Table
+buildIndexes content =
+  let !table = TableBuilder mempty (mempty <$ Vector.head content)
+      TableBuilder data_ indexes = foldl' (flip insertRow) table content
+      !data_' = build data_
+   in Table data_' indexes
 
 vAll :: Vector Value -> Value
 vAll =
@@ -254,11 +304,10 @@ eval ctx expr =
         _ -> error "not a list"
     Select field values value ->
       case eval ctx values of
-        VIndexed _ index ->
+        VIndexed _ table ->
           let !value' = eval ctx value
-           in case Map.lookup field index of
-                Nothing -> error "field missing from index"
-                Just index' -> maybe (VList mempty) (VList . fmap VRecord) $ Map.lookup value' index'
+           in maybe (VList mempty) (VList . fmap VRecord) $
+                selectRows field value' table
         VList values' ->
           let !value' = eval ctx value
            in maybe (VList mempty) id $

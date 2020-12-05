@@ -10,9 +10,13 @@ import Bound (toScope)
 import Bound.Var (Var (..))
 import Control.Monad (replicateM)
 import Criterion.Main (bench, bgroup, defaultMain, env, nf)
+import qualified Data.ByteString as ByteString
 import Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as HashMap
+import qualified Data.Persist as Persist
 import Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Encoding
 import Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import qualified Findless
@@ -94,7 +98,19 @@ repeatIt n f a =
   let !b = f a in b : repeatIt (n - 1) f a
 
 main :: IO ()
-main =
+main = do
+  do
+    xs :: Vector (Text, Int) <-
+      fmap Vector.fromList . replicateM 10000 $
+        (,)
+          <$> ( do
+                  n :: Int <- randomRIO (1, 50)
+                  Text.pack <$> replicateM n randomIO
+              )
+            <*> randomIO
+    let list = (\(x, y) -> [("x", Findless.VString x), ("y", Findless.VInt y)]) <$> xs
+    ByteString.writeFile "10000.index" $ Persist.encode (Findless.buildIndexes list)
+    ByteString.writeFile "10000.csv" $ foldMap ((<> "\n") . HashMap.foldrWithKey (\_ v rest -> Encoding.encodeUtf8 (Findless.renderValue v) <> ", " <> rest) mempty) list
   defaultMain
     [ bgroup
         "exclude optimise and index build"
