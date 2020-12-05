@@ -101,18 +101,6 @@ findlessAnyFalse expr =
     Findless.Any values | Vector.null values -> Just Findless.BFalse
     _ -> Nothing
 
--- ifThenElse(true, a, b) ~> a
--- ifThenElse(true, a, b) ~> b
-findlessIfThenElse :: Findless.Expr a -> Maybe (Findless.Expr a)
-findlessIfThenElse expr =
-  case expr of
-    Findless.IfThenElse a b c ->
-      case a of
-        Findless.BTrue -> Just b
-        Findless.BFalse -> Just c
-        _ -> Nothing
-    _ -> Nothing
-
 findlessMaybeMaybe :: Findless.Expr a -> Maybe (Findless.Expr a)
 findlessMaybeMaybe expr =
   case expr of
@@ -135,13 +123,6 @@ findlessMaybe expr =
         Findless.MNothing -> Just a
         Findless.MJust x -> Just $ instantiate1 x b
         _ -> Nothing
-    _ -> Nothing
-
-findlessMaybeIfThenElse :: Findless.Expr a -> Maybe (Findless.Expr a)
-findlessMaybeIfThenElse expr =
-  case expr of
-    Findless.Maybe a b (Findless.IfThenElse c d e) ->
-      Just $ Findless.IfThenElse c (Findless.Maybe a b d) (Findless.Maybe a b e)
     _ -> Nothing
 
 findlessUnfuseHeadFilterAnyEqual :: Findless.Expr a -> Maybe (Findless.Expr a)
@@ -187,10 +168,10 @@ rules =
     , Optimise.findlessAnyFalse
     , Optimise.findlessFilterFalse
     , Optimise.findlessFilterTrue
-    , Optimise.findlessIfThenElse
-    , Optimise.findlessMaybeMaybe
+    , -- , Optimise.findlessIfThenElse
+      Optimise.findlessMaybeMaybe
     , Optimise.findlessMaybe
-    , Optimise.findlessMaybeIfThenElse
-    , Optimise.findlessUnfuseHeadFilterAnyEqual
+    , -- , Optimise.findlessMaybeIfThenElse
+      Optimise.findlessUnfuseHeadFilterAnyEqual
     , Optimise.findlessHeadEmpty
     ]

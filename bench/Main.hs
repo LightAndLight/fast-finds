@@ -151,6 +151,33 @@ main =
               ]
         ]
     , bgroup
+        "include optimise and index build but eval 10 times"
+        [ env (setup1 5 10) $ \ ~(e1, list1, ctx1) ->
+            bgroup
+              "10"
+              [ bench "syntax" $ nf (repeatIt 10 (Syntax.eval ctx1)) e1
+              , bench "findless" $ nf (\arg -> let !(e2, _, ctx2) = mk arg in repeatIt 10 (Findless.eval ctx2) e2) (e1, list1)
+              ]
+        , env (setup1 50 100) $ \ ~(e1, list1, ctx1) ->
+            bgroup
+              "100"
+              [ bench "syntax" $ nf (repeatIt 10 (Syntax.eval ctx1)) e1
+              , bench "findless" $ nf (\arg -> let !(e2, _, ctx2) = mk arg in repeatIt 10 (Findless.eval ctx2) e2) (e1, list1)
+              ]
+        , env (setup1 500 1000) $ \ ~(e1, list1, ctx1) ->
+            bgroup
+              "1000"
+              [ bench "syntax" $ nf (repeatIt 10 (Syntax.eval ctx1)) e1
+              , bench "findless" $ nf (\arg -> let !(e2, _, ctx2) = mk arg in repeatIt 10 (Findless.eval ctx2) e2) (e1, list1)
+              ]
+        , env (setup1 5000 10000) $ \ ~(e1, list1, ctx1) ->
+            bgroup
+              "10000"
+              [ bench "syntax" $ nf (repeatIt 10 (Syntax.eval ctx1)) e1
+              , bench "findless" $ nf (\arg -> let !(e2, _, ctx2) = mk arg in repeatIt 10 (Findless.eval ctx2) e2) (e1, list1)
+              ]
+        ]
+    , bgroup
         "include optimise and index build but eval 100 times"
         [ env (setup1 5 10) $ \ ~(e1, list1, ctx1) ->
             bgroup
