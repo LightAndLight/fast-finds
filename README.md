@@ -112,6 +112,12 @@ Take something like `filter (\x -> p x && x.a == 3) values`, which would be rewr
 `filter (\x -> p x) (filter (\x -> x.a == 3) values)`. We can then run the `select` equation backwards on the inner filter
 to get `filter (\x -> p x) (select[a] 3 values)`.
 
+## This project
+
+I've implemented the fundamentals of this approach along with some tests and benchmarks. The program transformation 
+and index generation phases are amortised over the number of `select`s, and I wanted to see some numbers for
+how that works out in practise.
+
 ## Misc. improvements
 
 1. The larger the index, the bigger the performance gain. We can perform further program transformations to
