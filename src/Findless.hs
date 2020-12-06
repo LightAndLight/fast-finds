@@ -25,6 +25,7 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (fromJust)
 import Data.Persist (Persist)
 import Data.Persist.HashMap.Strict ()
 import Data.Persist.Vector ()
@@ -167,15 +168,17 @@ indexLookup :: Value -> Index -> Maybe (Vector Id)
 indexLookup v (Index m) = Map.lookup v m
 
 data TableBuilder = TableBuilder
-  { _tableBuilderData :: Vector.Builder (HashMap Text Value)
+  { _tableBuilderHeader :: Vector Text
+  , _tableBuilderData :: Vector.Builder (Vector Value)
   , _tableBuilderIndexes :: HashMap Text Index
   }
 
 insertRow :: HashMap Text Value -> TableBuilder -> TableBuilder
-insertRow row (TableBuilder data_ indexes) =
-  TableBuilder (data_ <> Builder.singleton row) updatedIndexes
+insertRow row (TableBuilder header data_ indexes) =
+  TableBuilder header (data_ <> Builder.singleton row') updatedIndexes
  where
   !rowId = Id $ Builder.size data_
+  !row' = fromJust $ traverse (\field -> HashMap.lookup field row) header
   !updatedIndexes =
     HashMap.mapWithKey
       ( \k index -> case HashMap.lookup k row of
@@ -184,23 +187,36 @@ insertRow row (TableBuilder data_ indexes) =
       )
       indexes
 
-data Table = Table {_tableData :: Vector (HashMap Text Value), _tableIndexes :: HashMap Text Index}
+data Table = Table
+  { _tableHeader :: Vector Text
+  , _tableData :: Vector (Vector Value)
+  , _tableIndexes :: HashMap Text Index
+  }
   deriving (Eq, Ord, Show, Generic)
 instance Persist Table
 instance NFData Table
 
 selectRows :: Text -> Value -> Table -> Maybe (Vector (HashMap Text Value))
-selectRows field value (Table data_ indexes) = do
+selectRows field value (Table header data_ indexes) = do
   index <- HashMap.lookup field indexes
   ids <- indexLookup value index
-  pure $ (\(Id i) -> Vector.unsafeIndex data_ i) <$> ids
+  pure $
+    ( \(Id i) ->
+        let row = Vector.unsafeIndex data_ i
+         in Vector.ifoldl'
+              (\acc ix field' -> HashMap.insert field' (Vector.unsafeIndex row ix) acc)
+              mempty
+              header
+    )
+      <$> ids
 
 buildIndexes :: Vector (HashMap Text Value) -> Table
 buildIndexes content =
-  let !table = TableBuilder mempty (mempty <$ Vector.head content)
-      TableBuilder data_ indexes = foldl' (flip insertRow) table content
+  let !header = Vector.fromList . fmap fst $ HashMap.toList (Vector.head content)
+      !table = TableBuilder header mempty (mempty <$ Vector.head content)
+      TableBuilder header' data_ indexes = foldl' (flip insertRow) table content
       !data_' = build data_
-   in Table data_' indexes
+   in Table header' data_' indexes
 
 vAll :: Vector Value -> Value
 vAll =
