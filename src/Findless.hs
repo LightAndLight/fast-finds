@@ -25,7 +25,6 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromJust)
 import Data.Persist (Persist)
 import Data.Persist.HashMap.Strict ()
 import Data.Persist.Vector ()
@@ -60,7 +59,7 @@ data Expr a
   | Equals (Expr a) (Expr a)
   | Project (Expr a) Text
   | List (Vector (Expr a))
-  | Record (HashMap Text (Expr a))
+  | Record (Vector (Text, Expr a))
   | Int Int
   | String Text
   deriving (Functor, Foldable, Traversable, Generic)
@@ -90,7 +89,7 @@ instance Monad Expr where
       Equals a b -> Equals (a >>= f) (b >>= f)
       Project a b -> Project (a >>= f) b
       List a -> List ((>>= f) <$> a)
-      Record a -> Record ((>>= f) <$> a)
+      Record a -> Record $ fmap (>>= f) <$> a
       Int n -> Int n
       String s -> String s
 
@@ -114,7 +113,7 @@ directChildren f e =
     Equals a b -> Equals <$> f a <*> f b
     Project a b -> Project <$> f a <*> pure b
     List a -> List <$> traverse f a
-    Record a -> Record <$> traverse f a
+    Record a -> Record <$> (traverse . traverse) f a
 
 mapDirectChildren :: (forall x. Expr x -> Expr x) -> Expr a -> Expr a
 mapDirectChildren f = runIdentity . directChildren (Identity . f)
@@ -131,7 +130,7 @@ data Value
   | VTrue
   | VFalse
   | VList (Vector Value)
-  | VRecord (HashMap Text Value)
+  | VRecord (Vector (Text, Value))
   | VIndexed (Vector Value) Table
   | VInt Int
   | VString Text
@@ -173,17 +172,17 @@ data TableBuilder = TableBuilder
   , _tableBuilderIndexes :: HashMap Text Index
   }
 
-insertRow :: HashMap Text Value -> TableBuilder -> TableBuilder
+insertRow :: Vector (Text, Value) -> TableBuilder -> TableBuilder
 insertRow row (TableBuilder header data_ indexes) =
   TableBuilder header (data_ <> Builder.singleton row') updatedIndexes
  where
   !rowId = Id $ Builder.size data_
-  !row' = fromJust $ traverse (\field -> HashMap.lookup field row) header
+  !row' = snd <$> row
   !updatedIndexes =
     HashMap.mapWithKey
-      ( \k index -> case HashMap.lookup k row of
+      ( \k index -> case Vector.find ((k ==) . fst) row of
           Nothing -> undefined
-          Just value -> indexInsert value rowId index
+          Just (_, value) -> indexInsert value rowId index
       )
       indexes
 
@@ -196,24 +195,21 @@ data Table = Table
 instance Persist Table
 instance NFData Table
 
-selectRows :: Text -> Value -> Table -> Maybe (Vector (HashMap Text Value))
+selectRows :: Text -> Value -> Table -> Maybe (Vector (Vector (Text, Value)))
 selectRows field value (Table header data_ indexes) = do
   index <- HashMap.lookup field indexes
   ids <- indexLookup value index
   pure $
     ( \(Id i) ->
-        let row = Vector.unsafeIndex data_ i
-         in Vector.ifoldl'
-              (\acc ix field' -> HashMap.insert field' (Vector.unsafeIndex row ix) acc)
-              mempty
-              header
+        let !row = Vector.unsafeIndex data_ i
+         in Vector.zip header row
     )
       <$> ids
 
-buildIndexes :: Vector (HashMap Text Value) -> Table
+buildIndexes :: Vector (Vector (Text, Value)) -> Table
 buildIndexes content =
-  let !header = Vector.fromList . fmap fst $ HashMap.toList (Vector.head content)
-      !table = TableBuilder header mempty (mempty <$ Vector.head content)
+  let !header = fst <$> Vector.head content
+      !table = TableBuilder header mempty (foldl' (\acc (n, _) -> HashMap.insert n mempty acc) mempty $ Vector.head content)
       TableBuilder header' data_ indexes = foldl' (flip insertRow) table content
       !data_' = build data_
    in Table header' data_' indexes
@@ -243,8 +239,10 @@ vEquals a b =
     VRecord items ->
       case b of
         VRecord items' ->
-          if HashMap.keys items == HashMap.keys items'
-            then vAll . Vector.fromList . toList $ HashMap.unionWith vEquals items items'
+          if fmap fst items == fmap fst items'
+            then
+              vAll . Vector.fromList . toList $
+                Vector.zipWith (\(_, c) (_, d) -> vEquals c d) items items'
             else VFalse
         _ -> error "not a record"
     VList values ->
@@ -330,9 +328,9 @@ eval ctx expr =
                 Vector.find
                   ( \case
                       VRecord items ->
-                        case HashMap.lookup field items of
+                        case Vector.find ((field ==) . fst) items of
                           Nothing -> error "missing field"
-                          Just value'' ->
+                          Just (_, value'') ->
                             case vEquals value' value'' of
                               VTrue -> True
                               VFalse -> False
@@ -354,12 +352,12 @@ eval ctx expr =
     Project value field ->
       case eval ctx value of
         VRecord items ->
-          case HashMap.lookup field items of
+          case Vector.find ((field ==) . fst) items of
             Nothing -> error "missing field"
-            Just value' -> value'
+            Just (_, value') -> value'
         _ -> error "not a record"
     List values -> VList $ eval ctx <$> values
-    Record items -> VRecord $ eval ctx <$> items
+    Record items -> VRecord $ fmap (eval ctx) <$> items
 
 toFindlessValue :: Syntax.Value -> Findless.Value
 toFindlessValue v =
@@ -369,4 +367,4 @@ toFindlessValue v =
     Syntax.VTrue -> Findless.VTrue
     Syntax.VFalse -> Findless.VFalse
     Syntax.VList vs -> Findless.VList $ toFindlessValue <$> vs
-    Syntax.VRecord vs -> Findless.VRecord $ toFindlessValue <$> vs
+    Syntax.VRecord vs -> Findless.VRecord $ fmap toFindlessValue <$> vs

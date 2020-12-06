@@ -11,8 +11,6 @@ import Bound.Var (Var (..))
 import Control.Monad (replicateM)
 import Criterion.Main (bench, bgroup, defaultMain, env, nf)
 import qualified Data.ByteString as ByteString
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Persist as Persist
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -24,7 +22,7 @@ import qualified Optimise
 import qualified Syntax
 import System.Random (randomIO, randomRIO)
 
-setup1 :: Int -> Int -> IO (Syntax.Expr Text, Vector (HashMap Text Syntax.Value), Text -> Syntax.Value)
+setup1 :: Int -> Int -> IO (Syntax.Expr Text, Vector (Vector (Text, Syntax.Value)), Text -> Syntax.Value)
 setup1 ix entries = do
   xs :: Vector (Text, Int) <-
     fmap Vector.fromList . replicateM entries $
@@ -55,10 +53,10 @@ setup2 ::
   Int ->
   ( IO
       ( Syntax.Expr Text
-      , Vector (HashMap Text Syntax.Value)
+      , Vector (Vector (Text, Syntax.Value))
       , Text -> Syntax.Value
       , Findless.Expr Text
-      , Vector (HashMap Text Findless.Value)
+      , Vector (Vector (Text, Findless.Value))
       , Text -> Findless.Value
       )
   )
@@ -70,14 +68,16 @@ setup2 ix entries = do
           Optimise.rules
           (Optimise.syntaxToFindless e1)
 
-      !list2 = fmap Findless.toFindlessValue <$> list1
+      !list2 = (fmap . fmap) Findless.toFindlessValue <$> list1
       !index = Findless.buildIndexes list2
       !list2' = Findless.VRecord <$> list2
 
       ctx2 = (\case "list" -> Findless.VIndexed list2' index; _ -> undefined)
   pure (e1, list1, ctx1, e2, list2, ctx2)
 
-mk :: (Syntax.Expr Text, Vector (HashMap Text Syntax.Value)) -> (Findless.Expr Text, Vector (HashMap Text Findless.Value), Text -> Findless.Value)
+mk ::
+  (Syntax.Expr Text, Vector (Vector (Text, Syntax.Value))) ->
+  (Findless.Expr Text, Vector (Vector (Text, Findless.Value)), Text -> Findless.Value)
 mk (e1, list1) =
   let e2 :: Findless.Expr Text
       !e2 =
@@ -85,7 +85,7 @@ mk (e1, list1) =
           Optimise.rules
           (Optimise.syntaxToFindless e1)
 
-      !list2 = fmap Findless.toFindlessValue <$> list1
+      !list2 = (fmap . fmap) Findless.toFindlessValue <$> list1
       !index = Findless.buildIndexes list2
       !list2' = Findless.VRecord <$> list2
 
@@ -110,7 +110,7 @@ main = do
             <*> randomIO
     let list = (\(x, y) -> [("x", Findless.VString x), ("y", Findless.VInt y)]) <$> xs
     ByteString.writeFile "10000.index" $ Persist.encode (Findless.buildIndexes list)
-    ByteString.writeFile "10000.csv" $ foldMap ((<> "\n") . HashMap.foldrWithKey (\_ v rest -> Encoding.encodeUtf8 (Findless.renderValue v) <> ", " <> rest) mempty) list
+    ByteString.writeFile "10000.csv" $ foldMap ((<> "\n") . foldr (\(_, v) rest -> Encoding.encodeUtf8 (Findless.renderValue v) <> ", " <> rest) mempty) list
   defaultMain
     [ bgroup
         "exclude optimise and index build"

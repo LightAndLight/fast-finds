@@ -33,7 +33,7 @@ syntaxToFindless expr =
     Syntax.Equals a b -> Findless.Equals (syntaxToFindless a) (syntaxToFindless b)
     Syntax.Project value field -> Findless.Project (syntaxToFindless value) field
     Syntax.List values -> Findless.List $ syntaxToFindless <$> values
-    Syntax.Record items -> Findless.Record $ syntaxToFindless <$> items
+    Syntax.Record items -> Findless.Record $ fmap syntaxToFindless <$> items
 
 hasSelectCondition :: Findless.Expr (Var () a) -> Bool
 hasSelectCondition =

@@ -11,8 +11,6 @@ import Bound.Var (unvar)
 import Control.DeepSeq (NFData)
 import Control.Monad (ap)
 import Data.Foldable (Foldable (toList))
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
 import Data.Text (Text)
 import Data.Vector (Vector)
 import qualified Data.Vector as Vector
@@ -35,7 +33,7 @@ data Expr a
   | Equals (Expr a) (Expr a)
   | Project (Expr a) Text
   | List (Vector (Expr a))
-  | Record (HashMap Text (Expr a))
+  | Record (Vector (Text, Expr a))
   | String Text
   | Int Int
   deriving (Functor, Generic)
@@ -55,12 +53,12 @@ instance Monad Expr where
       Equals a b -> Equals (a >>= f) (b >>= f)
       Project a b -> Project (a >>= f) b
       List a -> List ((>>= f) <$> a)
-      Record a -> Record ((>>= f) <$> a)
+      Record a -> Record (fmap (>>= f) <$> a)
       String s -> String s
       Int n -> Int n
 
 data Value
-  = VRecord (HashMap Text Value)
+  = VRecord (Vector (Text, Value))
   | VList (Vector Value)
   | VTrue
   | VFalse
@@ -87,8 +85,10 @@ vEquals a b =
     VRecord items ->
       case b of
         VRecord items' ->
-          if HashMap.keys items == HashMap.keys items'
-            then vAll . Vector.fromList . toList $ HashMap.unionWith vEquals items items'
+          if fmap fst items == fmap fst items'
+            then
+              vAll . Vector.fromList . toList $
+                Vector.zipWith (\(_, c) (_, d) -> vEquals c d) items items'
             else VFalse
         _ -> error "not a record"
     VList values ->
@@ -148,9 +148,9 @@ eval ctx expr =
     Project value field ->
       case eval ctx value of
         VRecord items ->
-          case HashMap.lookup field items of
+          case Vector.find ((field ==) . fst) items of
             Nothing -> error "missing field"
-            Just value' -> value'
+            Just (_, value') -> value'
         _ -> error "not a record"
     List values -> VList $ eval ctx <$> values
-    Record items -> VRecord $ eval ctx <$> items
+    Record items -> VRecord $ fmap (eval ctx) <$> items
